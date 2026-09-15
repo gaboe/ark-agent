@@ -21,6 +21,15 @@ fi
 # bark creates these world-readable; the mnemonic in particular should not be.
 chmod 600 "$BARKD_DATADIR/mnemonic" "$BARKD_DATADIR/db.sqlite" 2>/dev/null || true
 
+# A fixed auth secret means the token is known before the container ever runs,
+# so it can live in the deployment's environment instead of being fished out
+# of the container afterwards. Without it barkd generates a random one.
+if [ -n "$BARKD_AUTH_SECRET" ]; then
+    barkd --datadir "$BARKD_DATADIR" secret refresh --secret "$BARKD_AUTH_SECRET" -q >/dev/null \
+        && echo "[init] auth secret set from environment" \
+        || { echo "[init] FAILED to set auth secret"; exit 1; }
+fi
+
 # Keeper loop. `maintain` syncs and refreshes VTXOs that are close to expiry;
 # the server charges 0 ppm for those, so running it often costs nothing.
 (

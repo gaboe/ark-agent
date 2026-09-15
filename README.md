@@ -56,17 +56,31 @@ So a payment can arrive with hours left on it. `./wallet.sh vtxos` shows
 | `wallet.sh` | client for the payment API; token from the macOS Keychain |
 | `deploy.sh` | tells Coolify to pull the new image, waits for `/ping` |
 
+## Configuration
+
+Set in Coolify, not in the image:
+
+| variable | default | what |
+|---|---|---|
+| `ARK_SERVER` | `https://ark.second.tech` | Ark server |
+| `ESPLORA` | `https://mempool.second.tech/api` | chain data |
+| `MAINTAIN_INTERVAL` | `21600` | seconds between refresh runs |
+| `BARKD_AUTH_SECRET` | *(none)* | 32-byte hex; fixes the bearer token |
+| `BARKD_EXPOSE_MNEMONIC` | unset | leave unset — enabling it serves the seed over HTTP |
+
+`BARKD_AUTH_SECRET` is worth understanding. Without it barkd generates a random
+token on first boot, which then has to be fished out of the container with
+`docker exec`. With it, the token is decided before the container exists, so it
+can be generated locally, kept in the Keychain and handed to Coolify as a secret
+env var — no shell on the host needed to use the wallet.
+
+It is not extra protection. Anyone who can read Coolify's environment can spend
+the wallet, and so can anyone with `docker exec` on the host; this only removes
+a step, it does not add a boundary.
+
 ## First run
 
-Once deployed, the daemon prints nothing useful about its own credentials — read
-them out of the container and store them locally:
-
 ```sh
-# on the VPS
-docker exec <container> barkd --datadir /data secret show
-
-# on this machine
-security add-generic-password -a "$USER" -s barkd-token -w
 ./wallet.sh balance
 ./wallet.sh address        # fund this over Ark; instant and free
 ```
