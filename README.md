@@ -364,6 +364,23 @@ the host down, which is what happened when an unbounded process did get loose
 here. If the balance ever justifies closing the surface entirely, drop the domain
 and reach the daemon through `ssh -L 3000:localhost:3000`.
 
+## Backups
+
+The wallet's seed lives in `/data/mnemonic` inside the Coolify volume, on one
+VPS, unencrypted. That was its only copy. A second copy is now in the operator's
+macOS Keychain:
+
+```sh
+security find-generic-password -a "$USER" -s payment-agent-mnemonic -w
+```
+
+Recovering from it is `bark create --mnemonic`, which restores on-chain funds;
+VTXOs are re-fetched from the Ark server's recovery mailbox on first sync.
+
+`stop_grace_period` is 60s so a redeploy does not SIGKILL barkd mid-round — a
+wallet that vanishes while a round is signing is skipped and waits for the next
+one, which has already happened once here.
+
 ## Limits
 
 The seed lives on the VPS. A host compromise is a wallet compromise, and there is
