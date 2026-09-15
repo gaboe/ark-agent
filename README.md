@@ -22,7 +22,7 @@ what the agent needs:
 |---|---|---|
 | `GET /ping` | — | health check |
 | `GET /balance`, `/vtxos`, `/history`, `/limits` | read | |
-| `POST /address`, `/invoice` | invoice | |
+| `POST /address`, `/invoice`, `/bip321` | invoice | |
 | `POST /send` | spend | per-tx cap, daily cap, optional destination allowlist |
 | `POST /refresh` | spend | |
 | `GET /.well-known/lnurlp/agent` | — | Lightning address, public by necessity |
@@ -38,6 +38,23 @@ the higher one.
 
 `/wallet/create`, `/offboard/all` and `/exit/start` are not proxied at all —
 they exist in `barkd` but not in anything reachable from outside.
+
+### Paying this wallet cheaply
+
+Sending to `agent@pay.gaboe.xyz` from another client of the *same* Ark server
+still costs the server's flat `lightning_send` minimum of 20 sat, because a
+Lightning address can only ever produce a bolt11 and the payment leaves Ark and
+comes back. On a 14 sat payment that is a 143% fee.
+
+LNURL has no way to say "I also accept Ark". None of the 22 published LUDs
+defines a field for an alternative rail; `payRequest` returns `pr` and nothing
+else. The mechanism that does exist is BIP-321, a single URI carrying every
+rail, and Noah parses it — `sendFlow.ts` has `getBip321Rails` over
+`"ark" | "lightning" | "onchain"`.
+
+So `./wallet.sh uri [sat]` returns one, and a sender that understands it takes
+the Ark rail for free. Use the Lightning address for senders who have no Ark
+wallet; use the URI for everyone else.
 
 ### The Lightning address
 
