@@ -14,6 +14,7 @@ import { SpendTracker, scopeAllows, type Scope } from "./policy";
 import { RateLimiter } from "./ratelimit";
 import { runKeeperOnce } from "./keeper";
 import { intFromEnv, keysFromEnv } from "./config";
+import { lightningAddress, lnurlError, parseAmountMsat, payRequestParams, type LnurlConfig } from "./lnurl";
 
 const BARKD = process.env.BARKD_INTERNAL_URL ?? "http://127.0.0.1:3000";
 const BARKD_TOKEN = required("BARKD_AUTH_SECRET");
@@ -31,6 +32,13 @@ const tracker = new SpendTracker({
   allowedDestinations: (process.env.SPEND_ALLOWED_DESTINATIONS ?? "")
     .split(",").map((d) => d.trim()).filter(Boolean),
 });
+
+const LNURL: LnurlConfig = {
+  name: process.env.LN_ADDRESS_NAME ?? "agent",
+  domain: process.env.LN_ADDRESS_DOMAIN ?? "pay.gaboe.xyz",
+  minSendableMsat: intFromEnv("LN_MIN_SENDABLE_MSAT", 1_000, { min: 1000 }),
+  maxSendableMsat: intFromEnv("LN_MAX_SENDABLE_MSAT", 10_000_000, { min: 1000 }),
+};
 
 /** Nothing should hang a request or a keeper run forever. */
 const UPSTREAM_TIMEOUT_MS = intFromEnv("UPSTREAM_TIMEOUT_MS", 60_000, { min: 1000 });
@@ -129,6 +137,57 @@ const app = new Elysia()
     }
   })
   .get("/ping", () => "pong")
+
+  // Lightning address (LUD-16). Deliberately unauthenticated: anyone paying has
+  // to be able to reach it. Receiving cannot move funds out, so it sits outside
+  // the scope system — the global rate limiter is what bounds abuse.
+  .get("/.well-known/lnurlp/:name", async ({ params, query, set }) => {
+    if (params.name !== LNURL.name) {
+      set.status = 404;
+      return lnurlError("unknown recipient");
+    }
+
+    // Without ?amount this is the first LNURL call: return the parameters.
+    if (query.amount === undefined) return payRequestParams(LNURL);
+
+    const parsed = parseAmountMsat(query.amount, LNURL);
+    if (!parsed.ok) {
+      audit("lnurl_refused", { reason: parsed.reason, amount: query.amount });
+      set.status = 400;
+      return lnurlError(parsed.reason);
+    }
+
+    let res: Response;
+    try {
+      res = await bark("/api/v1/lightning/receives/invoice", {
+        method: "POST",
+        body: JSON.stringify({
+          amount_sat: parsed.sats,
+          description: `Paying satoshis to ${lightningAddress(LNURL)}`,
+        }),
+      });
+    } catch (e) {
+      audit("lnurl_invoice_error", { error: String(e) });
+      set.status = 502;
+      return lnurlError("could not create an invoice");
+    }
+
+    if (!res.ok) {
+      audit("lnurl_invoice_failed", { status: res.status });
+      set.status = 502;
+      return lnurlError("could not create an invoice");
+    }
+
+    const body = (await res.json()) as { invoice?: string };
+    if (!body.invoice) {
+      audit("lnurl_invoice_missing");
+      set.status = 502;
+      return lnurlError("could not create an invoice");
+    }
+
+    audit("lnurl_invoice", { amount_sat: parsed.sats });
+    return { pr: body.invoice, routes: [] };
+  })
 
   .get("/balance", async ({ headers, set }) => {
     const denied = guard("read")({ headers, set }); if (denied) return denied;
@@ -258,6 +317,7 @@ audit("gateway_started", {
   barkd: BARKD,
   scopes_configured: (Object.keys(KEYS) as Scope[]).filter((s) => KEYS[s]),
   limits: tracker.status(),
+  lightning_address: lightningAddress(LNURL),
   keeper_interval_s: KEEPER_INTERVAL_MS / 1000,
   refresh_threshold_blocks: keeperDeps.thresholdBlocks,
 });

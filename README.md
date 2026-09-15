@@ -25,6 +25,7 @@ what the agent needs:
 | `POST /address`, `/invoice` | invoice | |
 | `POST /send` | spend | per-tx cap, daily cap, optional destination allowlist |
 | `POST /refresh` | spend | |
+| `GET /.well-known/lnurlp/agent` | — | Lightning address, public by necessity |
 
 Scopes are hierarchical: a spend key can read. Keys are compared by hashing both
 sides to 32 bytes first and then using `timingSafeEqual`, so neither the length
@@ -37,6 +38,31 @@ the higher one.
 
 `/wallet/create`, `/offboard/all` and `/exit/start` are not proxied at all —
 they exist in `barkd` but not in anything reachable from outside.
+
+### The Lightning address
+
+`agent@pay.gaboe.xyz` resolves, per LUD-16, to
+`https://pay.gaboe.xyz/.well-known/lnurlp/agent`. It has to be unauthenticated —
+someone paying you cannot hold a key — which is safe because receiving cannot
+move funds out. The global rate limiter is what bounds invoice spam.
+
+It carries a known deviation from LUD-06: the spec requires the invoice to have
+`description_hash` (tag `h`) equal to sha256 of the metadata, and barkd cannot
+set one. It accepts only a plain description, and its invoices carry tag `d`.
+Wallets that verify the hash will reject them.
+
+It ships anyway because the incumbent has the identical flaw. Decoding an
+invoice from `gabo@noahwallet.io` — served by Noah's own barkd — gives:
+
+```
+tags: s(52), p(52), d(60), x(4), c(2), 9(4)
+h (description_hash): absent
+```
+
+So this is no worse than the address it replaces, and it becomes correct for
+free if barkd ever gains `description_hash`. Amounts arrive in millisatoshis and
+anything below a whole satoshi is refused rather than rounded: quietly changing
+what someone is paying is worse than making them retry.
 
 Quota is **reserved before** the call to barkd and released if barkd refuses it.
 Checking first and recording after would look equivalent and is not: the `await`
