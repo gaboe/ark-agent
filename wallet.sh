@@ -2,9 +2,10 @@
 # Talk to the agent's barkd instance.
 #
 # The bearer token grants FULL access: it can spend every sat in the wallet.
-# It lives in the macOS Keychain, never in this repo and never in shell history.
+# The secret it derives from lives in the macOS Keychain, never in this repo
+# and never in shell history.
 #
-#   security add-generic-password -a "$USER" -s barkd-token -w
+#   security add-generic-password -a "$USER" -s barkd-auth-secret -w
 #
 # Usage:
 #   ./wallet.sh balance
@@ -16,10 +17,23 @@
 set -e
 
 BARKD_URL=${BARKD_URL:-https://pay.gaboe.xyz}
-: "${BARKD_TOKEN:=$(security find-generic-password -a "$USER" -s barkd-token -w 2>/dev/null)}"
+
+# barkd's bearer token is base64(0x00 || the 32-byte secret), so it can be
+# derived from the same hex that Coolify hands the container as
+# BARKD_AUTH_SECRET. Keeping only the hex means one credential, in one place,
+# and never a reason to `docker exec` into the host to read a token.
+if [ -z "$BARKD_TOKEN" ]; then
+    secret=$(security find-generic-password -a "$USER" -s barkd-auth-secret -w 2>/dev/null || true)
+    if [ -n "$secret" ]; then
+        BARKD_TOKEN=$(python3 -c "
+import base64, binascii, sys
+print(base64.b64encode(bytes([0]) + binascii.unhexlify(sys.argv[1])).decode())
+" "$secret")
+    fi
+fi
 [ -n "$BARKD_TOKEN" ] || {
-    echo "no token: export \$BARKD_TOKEN, or store one with" >&2
-    echo "  security add-generic-password -a \"\$USER\" -s barkd-token -w" >&2
+    echo "no token: export \$BARKD_TOKEN, or store the hex secret with" >&2
+    echo "  security add-generic-password -a \"\$USER\" -s barkd-auth-secret -w" >&2
     exit 1
 }
 

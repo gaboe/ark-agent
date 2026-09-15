@@ -99,12 +99,19 @@ surfaces as a deployment that dies in seconds with no logs in the API. CI builds
 
 ## The token
 
+There is only one credential to keep, the 32-byte hex in `BARKD_AUTH_SECRET`:
+
 ```sh
-security add-generic-password -a "$USER" -s barkd-token -w
+security add-generic-password -a "$USER" -s barkd-auth-secret -w
 ```
 
-`barkd secret show` prints it, `barkd secret refresh` rotates it. Rotating it
-locks out anything holding the old one, which is the only revocation available.
+The bearer token the API expects is `base64(0x00 || secret)`, so `wallet.sh`
+derives it rather than storing a second copy. That is why no step here ever
+needs a shell on the host.
+
+Rotating means generating new hex, updating the Keychain and the Coolify
+variable, and redeploying. It locks out anything holding the old token, which is
+the only revocation mechanism that exists.
 
 ## Do not build this on the VPS
 
