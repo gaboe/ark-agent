@@ -1,14 +1,40 @@
-# Build bark + barkd from crates.io so the version is pinned and reproducible.
-FROM rust:1.91-bookworm AS builder
-RUN apt-get update && apt-get install -y --no-install-recommends protobuf-compiler \
-    && rm -rf /var/lib/apt/lists/*
-RUN cargo install bark-cli --version 0.7.1 --locked --root /out
-
+# Official release binaries, not a source build.
+#
+# Upstream publishes signed-checksum binaries for both architectures, so
+# compiling bark ourselves buys nothing and costs a lot: the first attempt
+# compiled on the VPS and exhausted its memory, the second cross-compiled under
+# QEMU in CI and took tens of minutes. This takes seconds and produces the same
+# binaries upstream tests and ships.
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+
+ARG BARK_VERSION=0.7.1
+ARG TARGETARCH
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /out/bin/bark /usr/local/bin/bark
-COPY --from=builder /out/bin/barkd /usr/local/bin/barkd
+
+# TARGETARCH is amd64/arm64; upstream names them x86_64/arm64.
+RUN set -eu; \
+    case "$TARGETARCH" in \
+        amd64) ARCH=x86_64 ;; \
+        arm64) ARCH=arm64 ;; \
+        *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    BASE="https://gitlab.com/api/v4/projects/ark-bitcoin%2Fbark/packages/generic/release-assets/bark-0%2E7%2E1"; \
+    curl -fsSL "$BASE/SHA256SUMS" -o /tmp/SHA256SUMS; \
+    for bin in bark barkd; do \
+        curl -fsSL "$BASE/${bin}-0%2E7%2E1-linux-${ARCH}" -o "/usr/local/bin/${bin}"; \
+        # Verify against upstream's own checksum file before trusting the binary.
+        expected=$(grep " ${bin}-${BARK_VERSION}-linux-${ARCH}\$" /tmp/SHA256SUMS | cut -d' ' -f1); \
+        actual=$(sha256sum "/usr/local/bin/${bin}" | cut -d' ' -f1); \
+        [ -n "$expected" ] || { echo "no checksum for ${bin}-${BARK_VERSION}-linux-${ARCH}" >&2; exit 1; }; \
+        [ "$expected" = "$actual" ] || { echo "checksum mismatch for ${bin}" >&2; exit 1; }; \
+        chmod +x "/usr/local/bin/${bin}"; \
+    done; \
+    rm -f /tmp/SHA256SUMS; \
+    bark --version
+
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 ENV BARKD_DATADIR=/data \

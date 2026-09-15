@@ -49,7 +49,7 @@ So a payment can arrive with hours left on it. `./wallet.sh vtxos` shows
 
 | file | what |
 |---|---|
-| `Dockerfile.build` | builds `bark` + `barkd` 0.7.1 from crates.io — runs in CI only |
+| `Dockerfile.build` | fetches upstream's `bark` + `barkd` 0.7.1 binaries, checksum-verified |
 | `Dockerfile` | what Coolify deploys: a one-line pull of the CI-built image |
 | `.github/workflows/build.yml` | builds and pushes `ghcr.io/gaboe/payment-agent` |
 | `entrypoint.sh` | creates the wallet if absent, starts the keeper, runs `barkd` |
@@ -113,17 +113,20 @@ Rotating means generating new hex, updating the Keychain and the Coolify
 variable, and redeploying. It locks out anything holding the old token, which is
 the only revocation mechanism that exists.
 
-## Do not build this on the VPS
+## Nothing here compiles
 
-The first deployment compiled bark on the server. A Rust build of this size
-wants several GB of RAM, the host did not have it to spare, and Coolify's own
-containers were starved until the whole panel went unreachable — while the
-already-running sites kept serving, which made it look like a Coolify fault
-rather than a memory one.
+Upstream ships release binaries for both architectures with a `SHA256SUMS` file,
+so the image just downloads and verifies them. Two earlier approaches were worse:
 
-The image is now built by GitHub Actions and pushed to GHCR; the server only
-pulls it. If you ever edit `Dockerfile.build`, let CI rebuild rather than
-pointing Coolify back at it.
+- **compiling on the VPS** — a Rust build of this size wants several GB of RAM,
+  the 3.7 GB host had none to spare, and Coolify's own containers were starved
+  until the panel went unreachable while the already-running sites kept serving.
+- **cross-compiling in CI under QEMU** — safe for the server, but tens of minutes
+  per build for an artifact upstream already publishes.
+
+Using the release binaries also removes the `You're running a custom build of
+bark, which might cause unexpected issues` warning that a cargo build carries,
+and shortens the trust chain to upstream's own checksums.
 
 ## Limits
 
