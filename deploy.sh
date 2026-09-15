@@ -7,7 +7,7 @@
 # Needs $COOLIFY_URL and $COOLIFY_TOKEN in the environment.
 set -e
 APP_UUID=qumjaakttw4qav9pmeupgksu
-BARKD_URL=${BARKD_URL:-https://barkd.gaboe.xyz}
+BARKD_URL=${BARKD_URL:-https://pay.gaboe.xyz}
 
 [ -n "$COOLIFY_TOKEN" ] || { echo "COOLIFY_TOKEN not set"; exit 1; }
 

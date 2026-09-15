@@ -15,7 +15,7 @@
 #   ./wallet.sh raw GET /api/v1/wallet/ark-info
 set -e
 
-BARKD_URL=${BARKD_URL:-https://barkd.gaboe.xyz}
+BARKD_URL=${BARKD_URL:-https://pay.gaboe.xyz}
 : "${BARKD_TOKEN:=$(security find-generic-password -a "$USER" -s barkd-token -w 2>/dev/null)}"
 [ -n "$BARKD_TOKEN" ] || {
     echo "no token: export \$BARKD_TOKEN, or store one with" >&2

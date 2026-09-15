@@ -1,8 +1,12 @@
-# ark-agent
+# payment-agent
 
-A Bitcoin wallet the agent can operate on its own: `barkd` (the Ark daemon from
-Second) behind an HTTPS endpoint, with a keeper loop that stops the funds from
-expiring.
+A Bitcoin wallet the agent can operate on its own.
+
+Today it speaks one protocol: Ark, via `barkd` (the daemon from Second) behind an
+HTTPS endpoint, with a keeper loop that stops the funds from expiring. The name
+is deliberately not `ark-agent` — Ark is the current backend, not the point. A
+Lightning node, a Cashu wallet or Spark could sit behind the same interface
+later, and the callers in `wallet.sh` should not have to care.
 
 ## Why a daemon and not the CLI
 
@@ -47,9 +51,9 @@ So a payment can arrive with hours left on it. `./wallet.sh vtxos` shows
 |---|---|
 | `Dockerfile.build` | builds `bark` + `barkd` 0.7.1 from crates.io — runs in CI only |
 | `Dockerfile` | what Coolify deploys: a one-line pull of the CI-built image |
-| `.github/workflows/build.yml` | builds and pushes `ghcr.io/gaboe/ark-agent` |
+| `.github/workflows/build.yml` | builds and pushes `ghcr.io/gaboe/payment-agent` |
 | `entrypoint.sh` | creates the wallet if absent, starts the keeper, runs `barkd` |
-| `wallet.sh` | client for the API; token from the macOS Keychain |
+| `wallet.sh` | client for the payment API; token from the macOS Keychain |
 | `deploy.sh` | tells Coolify to pull the new image, waits for `/ping` |
 
 ## First run
