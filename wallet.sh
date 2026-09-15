@@ -11,7 +11,7 @@
 #
 # Usage:
 #   ./wallet.sh balance | vtxos | history | limits
-#   ./wallet.sh address
+#   ./wallet.sh address | uri [sat]
 #   ./wallet.sh invoice <sat> [description]
 #   ./wallet.sh send <destination> <sat> [comment]
 #   ./wallet.sh refresh
@@ -57,6 +57,16 @@ case "$cmd" in
   history) api read GET /history | json ;;
   limits)  api read GET /limits | json ;;
   address) api invoice POST /address | json ;;
+  uri)
+      # BIP-321: one string carrying every rail. A sender that understands it
+      # picks Ark and pays nothing; Lightning to this wallet costs a flat 20 sat.
+      amt=$2
+      body=$(python3 -c "
+import json,sys
+d={}
+if len(sys.argv) > 1 and sys.argv[1]: d['amount_sat']=int(sys.argv[1])
+print(json.dumps(d))" "$amt")
+      api invoice POST /bip321 "$body" | json ;;
   invoice)
       amt=${2:?usage: ./wallet.sh invoice <sat> [description]}
       body=$(python3 -c "

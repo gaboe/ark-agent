@@ -214,6 +214,28 @@ const app = new Elysia()
     return passthrough(await bark("/api/v1/wallet/addresses/next", { method: "POST" }));
   })
 
+  // A unified payment URI (BIP-321) carrying every rail this wallet can
+  // receive on. LNURL cannot express this: none of the 22 published LUDs has a
+  // field for an alternative rail, so a Lightning address can only ever hand
+  // back a bolt11 — and paying this wallet over Lightning costs the Ark
+  // server's flat 20 sat minimum even when both ends sit on the same server.
+  // A sender that understands BIP-321 picks the Ark rail and pays nothing.
+  .post("/bip321", async ({ headers, set, body }) => {
+    const denied = guard("invoice")({ headers, set }); if (denied) return denied;
+    audit("bip321", { amount_sat: body.amount_sat });
+    return passthrough(await bark("/api/v1/wallet/bip321", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }));
+  }, {
+    body: t.Object({
+      amount_sat: t.Optional(t.Integer({ minimum: 1 })),
+      onchain: t.Optional(t.Boolean()),
+      label: t.Optional(t.String({ maxLength: 200 })),
+      message: t.Optional(t.String({ maxLength: 200 })),
+    }),
+  })
+
   .post("/invoice", async ({ headers, set, body }) => {
     const denied = guard("invoice")({ headers, set }); if (denied) return denied;
     audit("invoice", { amount_sat: body.amount_sat });
