@@ -148,7 +148,25 @@ const app = new Elysia()
     }
 
     // Without ?amount this is the first LNURL call: return the parameters.
-    if (query.amount === undefined) return payRequestParams(LNURL);
+    if (query.amount === undefined) {
+      const params = payRequestParams(LNURL);
+
+      // Non-standard, and deliberately so. LNURL has no field for an
+      // alternative rail, which means a wallet on this same Ark server pays the
+      // flat 20 sat Lightning minimum to reach a wallet one hop away. Clients
+      // ignore unknown fields, so advertising the Ark address here costs
+      // nothing and works the day any wallet decides to look for it.
+      try {
+        const res = await bark("/api/v1/wallet/addresses/next", { method: "POST" });
+        if (res.ok) {
+          const { address } = (await res.json()) as { address?: string };
+          if (address) return { ...params, ark: address };
+        }
+      } catch {
+        // An Ark address is a bonus; never fail the LNURL call over it.
+      }
+      return params;
+    }
 
     const parsed = parseAmountMsat(query.amount, LNURL);
     if (!parsed.ok) {

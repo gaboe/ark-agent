@@ -56,6 +56,13 @@ So `./wallet.sh uri [sat]` returns one, and a sender that understands it takes
 the Ark rail for free. Use the Lightning address for senders who have no Ark
 wallet; use the URI for everyone else.
 
+The `payRequest` response also carries a non-standard `ark` field with a fresh
+Ark address. Nothing reads it today — Noah's LNURL client parses only `tag`,
+`callback`, `minSendable`, `maxSendable` and `metadata` — but unknown fields are
+ignored by spec, so it costs nothing and works the day any wallet looks for it.
+It is the obvious place for such a hint: an Ark-native wallet paying an
+Ark-native wallet should not have to leave Ark to do it.
+
 ### The Lightning address
 
 `agent@pay.gaboe.xyz` resolves, per LUD-16, to
