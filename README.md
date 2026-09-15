@@ -244,7 +244,21 @@ SELECT exception FROM failed_jobs ORDER BY failed_at DESC LIMIT 1;
 That is where `no match for platform in manifest` was hiding.
 
 **Round participation survives a container restart.** It is persisted in the
-wallet's sqlite, so redeploying while a refresh is mid-round does not lose it.
+wallet's sqlite, so redeploying while a refresh is mid-round does not lose it —
+though the round itself may skip a wallet that vanishes mid-signing, so it waits
+for the next one.
+
+**Coolify deploys by starting the new container before stopping the old one.**
+For anything stateful sharing a volume that is fatal:
+
+```
+Error: another barkd is already running on datadir /data (pid 11)
+```
+
+There is no "zero downtime" toggle in the API. Enabling
+`is_consistent_container_name_enabled` fixes it: with a fixed container name
+Docker refuses to run two, which forces stop-then-start. Anything else deployed
+here that holds a lock — a database, another wallet — needs the same.
 
 ## Exposure
 
