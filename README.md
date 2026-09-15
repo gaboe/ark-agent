@@ -422,6 +422,30 @@ the host down, which is what happened when an unbounded process did get loose
 here. If the balance ever justifies closing the surface entirely, drop the domain
 and reach the daemon through `ssh -L 3000:localhost:3000`.
 
+## Knowing it still works
+
+`restart=unless-stopped` means a crash-loop looks identical to a healthy wallet
+from outside — the port answers, and nothing refreshes. So the question worth
+asking is not "is the process up" but "did maintenance last succeed recently":
+
+```sh
+curl https://pay.gaboe.xyz/health
+{"ok":true,"keeper_last_success":"2026-09-15T15:19:37.404Z","keeper_age_s":13,
+ "keeper_interval_s":21600,"keeper_last_error":null}
+```
+
+It answers 503 once the last success is older than three keeper intervals — one
+failure is a blip, three is a problem. It is unauthenticated on purpose: a
+monitor that needs a key is one more thing that can quietly stop working. It
+publishes liveness only, never balances.
+
+`check-health.sh` polls it and raises a macOS notification when it goes stale or
+unreachable. From cron, hourly:
+
+```
+0 * * * * /Users/gabrielecegi/op/payment-agent/check-health.sh
+```
+
 ## Backups
 
 The wallet's seed lives in `/data/mnemonic` inside the Coolify volume, on one

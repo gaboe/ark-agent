@@ -145,6 +145,26 @@ const app = new Elysia()
   })
   .get("/ping", () => "pong")
 
+  // Unauthenticated on purpose: a monitor that needs a key is one more thing
+  // that can silently stop working. It publishes liveness, never balances.
+  .get("/health", ({ set }) => {
+    const ageS = keeperLastSuccess === null
+      ? null
+      : Math.round((Date.now() - keeperLastSuccess) / 1000);
+
+    // Stale at three missed cycles: one failure is a blip, three is a problem.
+    const stale = ageS === null || ageS > (KEEPER_INTERVAL_MS / 1000) * 3;
+    if (stale) set.status = 503;
+
+    return {
+      ok: !stale,
+      keeper_last_success: keeperLastSuccess ? new Date(keeperLastSuccess).toISOString() : null,
+      keeper_age_s: ageS,
+      keeper_interval_s: KEEPER_INTERVAL_MS / 1000,
+      keeper_last_error: keeperLastError,
+    };
+  })
+
   // Lightning address (LUD-16). Deliberately unauthenticated: anyone paying has
   // to be able to reach it. Receiving cannot move funds out, so it sits outside
   // the scope system — the global rate limiter is what bounds abuse.
@@ -349,6 +369,17 @@ const keeperDeps = {
   log: audit,
 };
 
+/**
+ * Liveness of the keeper, exposed on /health.
+ *
+ * The container restarts on failure, so a crash-loop looks identical to a
+ * healthy wallet from outside: the port answers, and nothing refreshes. What
+ * matters is not "is the process up" but "did maintenance actually succeed
+ * recently", so that is what gets published.
+ */
+let keeperLastSuccess: number | null = null;
+let keeperLastError: string | null = null;
+
 let keeperRunning = false;
 const keep = async () => {
   // A slow upstream must not let runs pile up on top of each other.
@@ -359,8 +390,11 @@ const keep = async () => {
   keeperRunning = true;
   try {
     await runKeeperOnce(keeperDeps);
+    keeperLastSuccess = Date.now();
+    keeperLastError = null;
   } catch (e) {
-    audit("keeper_error", { error: String(e) });
+    keeperLastError = String(e);
+    audit("keeper_error", { error: keeperLastError });
   } finally {
     keeperRunning = false;
   }
