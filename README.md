@@ -31,6 +31,12 @@ app. A server has no such thing, so `entrypoint.sh` runs `bark maintain` every 6
 hours in the same container. If that loop dies, the container exits rather than
 leaving a wallet nobody is refreshing.
 
+The 6 hour interval is not arbitrary. `bark` refreshes a VTXO once it is within
+`vtxo_refresh_expiry_threshold` of expiring — 144 blocks, about 24 hours, on
+mainnet. So every VTXO gets four attempts inside its refresh window, which
+matters because a refresh is not local: it joins an Ark round, and rounds run
+hourly. A keeper that woke only once a day would get one shot at one round.
+
 ## Expiry is inherited, not granted
 
 Worth knowing before trusting a balance: an Ark transfer does **not** give the
