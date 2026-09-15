@@ -8,6 +8,51 @@ is deliberately not `ark-agent` — Ark is the current backend, not the point. A
 Lightning node, a Cashu wallet or Spark could sit behind the same interface
 later, and the callers in `wallet.sh` should not have to care.
 
+## The gateway
+
+`barkd` has one bearer token and it can do everything — spend the entire
+balance, offboard, start a unilateral exit. There is no scoping and no policy,
+because it is a wallet daemon, not a payments API.
+
+So `barkd` now binds to `127.0.0.1` and never faces the internet. A small Elysia
+service on Bun sits in front of it, holds the daemon's token, and exposes only
+what the agent needs:
+
+| endpoint | scope | notes |
+|---|---|---|
+| `GET /ping` | — | health check |
+| `GET /balance`, `/vtxos`, `/history`, `/limits` | read | |
+| `POST /address`, `/invoice` | invoice | |
+| `POST /send` | spend | per-tx cap, daily cap, optional destination allowlist |
+| `POST /refresh` | spend | |
+
+Scopes are hierarchical: a spend key can read. Keys are compared in constant
+time, and every key is checked on each request rather than returning early, so
+the comparison work does not vary with which key was presented.
+
+`/wallet/create`, `/offboard/all` and `/exit/start` are not proxied at all —
+they exist in `barkd` but not in anything reachable from outside.
+
+The daily tally lives in memory, so a restart resets it. That is a real gap: a
+process that crash-loops could exceed the daily cap. For a wallet holding a few
+thousand sats a database is not worth it; if the balance grows, fix this first.
+
+A failed payment does not consume quota — the tally is only incremented after
+`barkd` confirms the send. There is a test for exactly that, because getting it
+backwards would let anyone burn the daily limit with invalid requests.
+
+### Rate limiting
+
+Written here, not installed: `elysia-rate-limit` declares a peer dependency on
+`elysia >= 2.0.0`, which is not a released version, and installing it against
+Elysia 1.4 crashes at startup with `plugin.beforeHandle is undefined`. The
+replacement is a fixed-window counter keyed on `X-Forwarded-For` — 40 lines,
+with tests.
+
+```sh
+cd gateway && bun test
+```
+
 ## Why a daemon and not the CLI
 
 `bark` keeps its seed in a plaintext file and signs locally, so anything that can

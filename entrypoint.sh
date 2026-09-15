@@ -45,17 +45,40 @@ KEEPER=$!
 
 # If the keeper exits, take the daemon down too rather than silently
 # running a wallet nobody is refreshing.
-trap 'kill $KEEPER 2>/dev/null; exit 0' TERM INT
+trap 'kill $KEEPER $DAEMON $GATEWAY 2>/dev/null; exit 0' TERM INT
 
-echo "[barkd] starting on $BARKD_BIND_HOST:$BARKD_BIND_PORT"
+echo "[barkd] starting on $BARKD_BIND_HOST:$BARKD_BIND_PORT (loopback only)"
 barkd &
 DAEMON=$!
 
-# `wait -n` is a bashism and /bin/sh here is dash, so poll both children.
-while kill -0 "$KEEPER" 2>/dev/null && kill -0 "$DAEMON" 2>/dev/null; do
+# The gateway proxies to barkd, so barkd has to be answering before it starts
+# taking requests.
+i=0
+while [ $i -lt 60 ]; do
+    if curl -sf -o /dev/null "http://127.0.0.1:${BARKD_BIND_PORT}/ping" 2>/dev/null; then
+        break
+    fi
+    i=$((i + 1))
+    sleep 1
+done
+if [ $i -ge 60 ]; then
+    echo "[fatal] barkd did not answer on loopback within 60s"
+    kill "$KEEPER" "$DAEMON" 2>/dev/null || true
+    exit 1
+fi
+echo "[barkd] ready"
+
+echo "[gateway] starting on 0.0.0.0:${GATEWAY_PORT}"
+(cd /gateway && exec bun run index.ts) &
+GATEWAY=$!
+
+# `wait -n` is a bashism and /bin/sh here is dash, so poll the children.
+while kill -0 "$KEEPER" 2>/dev/null \
+   && kill -0 "$DAEMON" 2>/dev/null \
+   && kill -0 "$GATEWAY" 2>/dev/null; do
     sleep 5
 done
 
 echo "[fatal] a child exited, shutting down"
-kill "$KEEPER" "$DAEMON" 2>/dev/null || true
+kill "$KEEPER" "$DAEMON" "$GATEWAY" 2>/dev/null || true
 exit 1

@@ -35,10 +35,23 @@ RUN set -eu; \
     rm -f /tmp/SHA256SUMS; \
     bark --version
 
+# Bun runs the gateway that sits in front of barkd.
+COPY --from=oven/bun:1.4-slim /usr/local/bin/bun /usr/local/bin/bun
+
+WORKDIR /gateway
+COPY gateway/package.json gateway/bun.lock* ./
+RUN bun install --frozen-lockfile --production 2>/dev/null || bun install --production
+COPY gateway/ ./
+
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# barkd listens on loopback only: everything from outside goes through the
+# gateway, which is the whole point of having one.
 ENV BARKD_DATADIR=/data \
-    BARKD_BIND_HOST=0.0.0.0 \
-    BARKD_BIND_PORT=3000
-EXPOSE 3000
+    BARKD_BIND_HOST=127.0.0.1 \
+    BARKD_BIND_PORT=3000 \
+    GATEWAY_PORT=3001 \
+    BARKD_INTERNAL_URL=http://127.0.0.1:3000
+EXPOSE 3001
 CMD ["/usr/local/bin/entrypoint.sh"]
