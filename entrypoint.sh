@@ -18,6 +18,9 @@ else
     echo "[init] existing wallet found"
 fi
 
+# bark creates these world-readable; the mnemonic in particular should not be.
+chmod 600 "$BARKD_DATADIR/mnemonic" "$BARKD_DATADIR/db.sqlite" 2>/dev/null || true
+
 # Keeper loop. `maintain` syncs and refreshes VTXOs that are close to expiry;
 # the server charges 0 ppm for those, so running it often costs nothing.
 (
@@ -39,7 +42,11 @@ echo "[barkd] starting on $BARKD_BIND_HOST:$BARKD_BIND_PORT"
 barkd &
 DAEMON=$!
 
-wait -n "$KEEPER" "$DAEMON"
+# `wait -n` is a bashism and /bin/sh here is dash, so poll both children.
+while kill -0 "$KEEPER" 2>/dev/null && kill -0 "$DAEMON" 2>/dev/null; do
+    sleep 5
+done
+
 echo "[fatal] a child exited, shutting down"
 kill "$KEEPER" "$DAEMON" 2>/dev/null || true
 exit 1
