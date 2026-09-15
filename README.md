@@ -85,6 +85,18 @@ Ark-native wallet, and over Lightning for everyone else, with no change on the
 sender's side. This is not in any LUD; it is implemented from Noah's client
 code.
 
+It works in both directions. Noah's *server* answers the same handshake, so
+paying `gabo@noahwallet.io` from here also takes the Ark rail:
+
+```sh
+curl "https://noahwallet.io/.well-known/lnurlp/gabo?ark=<server_pubkey>"
+# → { "tag": "payRequest", "ark": "ark1pu6h30w3zqqppmyx…", … }
+```
+
+Both directions were settled for 0 sat. Over the Lightning rail the same
+payments would each have cost the server's flat 20 sat minimum — on a 14 sat
+payment, a 143% fee.
+
 ### The Lightning address
 
 `agent@pay.gaboe.xyz` resolves, per LUD-16, to
