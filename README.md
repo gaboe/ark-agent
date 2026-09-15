@@ -104,6 +104,30 @@ mainnet. So every VTXO gets four attempts inside its refresh window, which
 matters because a refresh is not local: it joins an Ark round, and rounds run
 hourly. A keeper that woke only once a day would get one shot at one round.
 
+## A refresh waits on someone else's transaction
+
+Refreshing joins an Ark round, and the round settles as one on-chain transaction
+that the server funds and batches across every participant. A real one from this
+wallet:
+
+```
+62f212cedc49cd26…   1 input, 2 outputs, 9,970,076 sat
+fee 167 sat / 154 vB = 1.08 sat/vB
+```
+
+We paid nothing — 0 ppm applies under the expiry threshold — and the server paid
+167 sat for everyone in the round. That is the whole economic argument for Ark.
+
+The cost is a dependency that is easy to miss: **the server picks the fee rate,
+and the refresh is not complete until that transaction confirms.** It cannot be
+fee-bumped or replaced from here; it is not this wallet's transaction. At a
+quiet mempool 1.08 sat/vB confirms quickly. At a busy one, a VTXO with only a
+few blocks left could miss its window with nothing to be done about it.
+
+Which is the real argument for the keeper's 24-hour threshold and 6-hour
+interval: the refresh needs to start early enough that a slow block does not
+matter.
+
 ## Expiry is inherited, not granted
 
 Worth knowing before trusting a balance: an Ark transfer does **not** give the
