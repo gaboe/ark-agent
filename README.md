@@ -179,6 +179,42 @@ That is where `no match for platform in manifest` was hiding.
 **Round participation survives a container restart.** It is persisted in the
 wallet's sqlite, so redeploying while a refresh is mid-round does not lose it.
 
+## Exposure
+
+The API is on a public domain because that is how Coolify routes things and how
+the client reaches it. What that means in practice, measured rather than assumed:
+
+| | |
+|---|---|
+| `/ping` | 200, unauthenticated — Coolify's health check needs it |
+| `/swagger-ui`, `/api-docs` | 403 at the proxy; `barkd` serves them unconditionally, the cargo feature is compiled into the release binary |
+| everything else | 401 without a valid token, including every `POST` |
+
+The token comparison uses `subtle::ConstantTimeEq`, so there is no timing
+oracle, and the auth middleware is a `route_layer` — it runs before any request
+body is parsed. Guessing 32 bytes is not a threat.
+
+The real exposure is resource exhaustion: there is **no rate limiting**. Twelve
+rapid attempts return twelve 401s with no backoff, and this Caddy build has no
+`rate_limit` module (it is a plugin, and the proxy is shared with every other
+site on the host).
+
+So the mitigation is blast radius, not prevention. The container runs with:
+
+```
+limits_memory      512m     (steady-state use is ~12 MiB)
+limits_memory_swap 512m
+limits_cpus        0.5
+```
+
+Set these through Coolify's `limits_*` fields, not `custom_docker_run_options` —
+the latter is stored but never reaches the container.
+
+Flooding the endpoint can still waste CPU inside those bounds; it cannot take
+the host down, which is what happened when an unbounded process did get loose
+here. If the balance ever justifies closing the surface entirely, drop the domain
+and reach the daemon through `ssh -L 3000:localhost:3000`.
+
 ## Limits
 
 The seed lives on the VPS. A host compromise is a wallet compromise, and there is
