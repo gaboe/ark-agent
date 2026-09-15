@@ -105,9 +105,12 @@ There is only one credential to keep, the 32-byte hex in `BARKD_AUTH_SECRET`:
 security add-generic-password -a "$USER" -s barkd-auth-secret -w
 ```
 
-The bearer token the API expects is `base64(0x00 || secret)`, so `wallet.sh`
-derives it rather than storing a second copy. That is why no step here ever
-needs a shell on the host.
+The bearer token the API expects is `base64url(0x00 || secret)` — urlsafe, so it
+can contain `-` and `_`. `wallet.sh` derives it rather than storing a second
+copy, which is why no step here ever needs a shell on the host.
+
+(Worth a warning: a test secret of one repeated byte encodes identically under
+both base64 alphabets, so it will not tell you which one is in use.)
 
 Rotating means generating new hex, updating the Keychain and the Coolify
 variable, and redeploying. It locks out anything holding the old token, which is

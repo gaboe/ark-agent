@@ -18,7 +18,8 @@ set -e
 
 BARKD_URL=${BARKD_URL:-https://pay.gaboe.xyz}
 
-# barkd's bearer token is base64(0x00 || the 32-byte secret), so it can be
+# barkd's bearer token is base64url(0x00 || the 32-byte secret) — urlsafe, so
+# it can contain - and _ where standard base64 would put + and /. It can be
 # derived from the same hex that Coolify hands the container as
 # BARKD_AUTH_SECRET. Keeping only the hex means one credential, in one place,
 # and never a reason to `docker exec` into the host to read a token.
@@ -27,7 +28,7 @@ if [ -z "$BARKD_TOKEN" ]; then
     if [ -n "$secret" ]; then
         BARKD_TOKEN=$(python3 -c "
 import base64, binascii, sys
-print(base64.b64encode(bytes([0]) + binascii.unhexlify(sys.argv[1])).decode())
+print(base64.urlsafe_b64encode(bytes([0]) + binascii.unhexlify(sys.argv[1])).decode())
 " "$secret")
     fi
 fi
