@@ -56,12 +56,34 @@ So `./wallet.sh uri [sat]` returns one, and a sender that understands it takes
 the Ark rail for free. Use the Lightning address for senders who have no Ark
 wallet; use the URI for everyone else.
 
-The `payRequest` response also carries a non-standard `ark` field with a fresh
-Ark address. Nothing reads it today — Noah's LNURL client parses only `tag`,
-`callback`, `minSendable`, `maxSendable` and `metadata` — but unknown fields are
-ignored by spec, so it costs nothing and works the day any wallet looks for it.
-It is the obvious place for such a hint: an Ark-native wallet paying an
-Ark-native wallet should not have to leave Ark to do it.
+There is also an unwritten convention for exactly this, and Noah implements
+both halves of it. Its client announces itself on the LNURL request:
+
+```ts
+arkLnurlEndpoint.searchParams.set("ark", arkInfoResult.value.server_pubkey);
+```
+
+and reads an `ark` address back out of the response:
+
+```ts
+if (acceptArkAddress && response.ark) {
+  const validationResult = await validateArkoorPaymentAddress(response.ark);
+  if (validationResult.isOk()) {
+    return { method: "ark", destination: response.ark, ...limits };
+  }
+}
+```
+
+So `GET /.well-known/lnurlp/agent?ark=<server_pubkey>` answers with an `ark`
+field when that pubkey matches this wallet's own server, and omits it otherwise
+— to a caller on a different Ark server the address is unspendable, and Noah
+would discard it anyway. The server pubkey is read from barkd at startup rather
+than configured, so it cannot drift from the server the wallet is actually on.
+
+The effect is that `agent@pay.gaboe.xyz` pays over Ark for free from an
+Ark-native wallet, and over Lightning for everyone else, with no change on the
+sender's side. This is not in any LUD; it is implemented from Noah's client
+code.
 
 ### The Lightning address
 

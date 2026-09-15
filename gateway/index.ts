@@ -40,6 +40,13 @@ const LNURL: LnurlConfig = {
   maxSendableMsat: intFromEnv("LN_MAX_SENDABLE_MSAT", 10_000_000, { min: 1000 }),
 };
 
+/**
+ * Our Ark server's pubkey, used to decide whether a caller is close enough to
+ * be paid over Ark. Read from barkd at startup rather than configured, so it
+ * cannot drift from the server the wallet is actually on.
+ */
+let ARK_SERVER_PUBKEY: string | null = null;
+
 /** Nothing should hang a request or a keeper run forever. */
 const UPSTREAM_TIMEOUT_MS = intFromEnv("UPSTREAM_TIMEOUT_MS", 60_000, { min: 1000 });
 
@@ -151,19 +158,28 @@ const app = new Elysia()
     if (query.amount === undefined) {
       const params = payRequestParams(LNURL);
 
-      // Non-standard, and deliberately so. LNURL has no field for an
-      // alternative rail, which means a wallet on this same Ark server pays the
-      // flat 20 sat Lightning minimum to reach a wallet one hop away. Clients
-      // ignore unknown fields, so advertising the Ark address here costs
-      // nothing and works the day any wallet decides to look for it.
-      try {
-        const res = await bark("/api/v1/wallet/addresses/next", { method: "POST" });
-        if (res.ok) {
-          const { address } = (await res.json()) as { address?: string };
-          if (address) return { ...params, ark: address };
+      // Ark-aware callers announce themselves with ?ark=<server_pubkey>, and
+      // read an `ark` address back out of the response. Noah does both; the
+      // convention is not in any LUD, so it is implemented here from its
+      // client code. Answering it turns a payment between two clients of the
+      // same Ark server from a Lightning round-trip — the server's flat 20 sat
+      // minimum — into a free off-chain transfer.
+      //
+      // The address is only offered to a caller on *this* server: to anyone
+      // else it is unspendable, and Noah would rightly discard it.
+      if (typeof query.ark === "string" && query.ark === ARK_SERVER_PUBKEY) {
+        try {
+          const res = await bark("/api/v1/wallet/addresses/next", { method: "POST" });
+          if (res.ok) {
+            const { address } = (await res.json()) as { address?: string };
+            if (address) {
+              audit("lnurl_ark_offered");
+              return { ...params, ark: address };
+            }
+          }
+        } catch {
+          // The Ark rail is an optimisation; never fail the LNURL call over it.
         }
-      } catch {
-        // An Ark address is a bonus; never fail the LNURL call over it.
       }
       return params;
     }
@@ -352,12 +368,23 @@ const keep = async () => {
 setTimeout(keep, 30_000);           // once shortly after boot
 setInterval(keep, KEEPER_INTERVAL_MS);
 
+try {
+  const info = await bark("/api/v1/wallet/ark-info");
+  if (info.ok) {
+    const { server_pubkey } = (await info.json()) as { server_pubkey?: string };
+    ARK_SERVER_PUBKEY = server_pubkey ?? null;
+  }
+} catch {
+  // Without it the Ark hint is simply never offered; Lightning still works.
+}
+
 audit("gateway_started", {
   port: PORT,
   barkd: BARKD,
   scopes_configured: (Object.keys(KEYS) as Scope[]).filter((s) => KEYS[s]),
   limits: tracker.status(),
   lightning_address: lightningAddress(LNURL),
+  ark_server_pubkey: ARK_SERVER_PUBKEY,
   keeper_interval_s: KEEPER_INTERVAL_MS / 1000,
   refresh_threshold_blocks: keeperDeps.thresholdBlocks,
 });
