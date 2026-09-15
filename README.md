@@ -65,7 +65,7 @@ Set in Coolify, not in the image:
 | `ARK_SERVER` | `https://ark.second.tech` | Ark server |
 | `ESPLORA` | `https://mempool.second.tech/api` | chain data |
 | `MAINTAIN_INTERVAL` | `21600` | seconds between refresh runs |
-| `BARKD_AUTH_SECRET` | *(none)* | 32-byte hex; fixes the bearer token |
+| `BARKD_AUTH_SECRET` | *(none)* | 32-byte hex; fixes the bearer token. **Runtime only** — see below |
 | `BARKD_EXPOSE_MNEMONIC` | unset | leave unset — enabling it serves the seed over HTTP |
 
 `BARKD_AUTH_SECRET` is worth understanding. Without it barkd generates a random
@@ -77,6 +77,18 @@ env var — no shell on the host needed to use the wallet.
 It is not extra protection. Anyone who can read Coolify's environment can spend
 the wallet, and so can anyone with `docker exec` on the host; this only removes
 a step, it does not add a boundary.
+
+Mark it runtime-only in Coolify. By default Coolify also hands variables to the
+build as `ARG`s, which writes the value in plain text into the build log and,
+when a build fails, into the `failed_jobs` table of Coolify's own database. A
+secret that has ever been a build argument should be rotated, not re-used.
+
+## The host is ARM
+
+The deployment target is an `aarch64` Hetzner box. A single-platform amd64 image
+fails at deploy time with `no match for platform in manifest: not found`, which
+surfaces as a deployment that dies in seconds with no logs in the API. CI builds
+`linux/amd64,linux/arm64` for that reason.
 
 ## First run
 
