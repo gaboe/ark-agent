@@ -50,6 +50,22 @@ So a payment can arrive with hours left on it. `./wallet.sh vtxos` shows
 | `.github/workflows/build.yml` | builds and pushes `ghcr.io/gaboe/ark-agent` |
 | `entrypoint.sh` | creates the wallet if absent, starts the keeper, runs `barkd` |
 | `wallet.sh` | client for the API; token from the macOS Keychain |
+| `deploy.sh` | tells Coolify to pull the new image, waits for `/ping` |
+
+## First run
+
+Once deployed, the daemon prints nothing useful about its own credentials — read
+them out of the container and store them locally:
+
+```sh
+# on the VPS
+docker exec <container> barkd --datadir /data secret show
+
+# on this machine
+security add-generic-password -a "$USER" -s barkd-token -w
+./wallet.sh balance
+./wallet.sh address        # fund this over Ark; instant and free
+```
 
 ## The token
 
