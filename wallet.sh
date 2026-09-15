@@ -35,13 +35,16 @@ api() {
         echo "no $scope key in the Keychain; see the header of this script" >&2
         exit 1
     fi
+    # The key goes through a config file on stdin, not the command line: an
+    # argument is visible in `ps` to every other user on the machine for as
+    # long as the request runs.
     if [ -n "$body" ]; then
-        curl -sS --max-time 120 -X "$method" "$GATEWAY_URL$path" \
-            -H "Authorization: Bearer $key" \
-            -H 'Content-Type: application/json' -d "$body"
+        printf 'header = "Authorization: Bearer %s"\n' "$key" | \
+            curl -sS --max-time 120 -X "$method" "$GATEWAY_URL$path" \
+                --config - -H 'Content-Type: application/json' -d "$body"
     else
-        curl -sS --max-time 120 -X "$method" "$GATEWAY_URL$path" \
-            -H "Authorization: Bearer $key"
+        printf 'header = "Authorization: Bearer %s"\n' "$key" | \
+            curl -sS --max-time 120 -X "$method" "$GATEWAY_URL$path" --config -
     fi
 }
 

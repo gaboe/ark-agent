@@ -22,6 +22,27 @@ export interface Vtxo {
 }
 
 /**
+ * barkd's response is trusted but not assumed: an unchecked cast means a error
+ * shape or a missing field throws inside the keeper, the caller swallows it,
+ * and the container keeps looking healthy while VTXOs march to expiry — the
+ * exact failure the keeper exists to prevent.
+ */
+export function parseVtxos(value: unknown): Vtxo[] {
+  if (!Array.isArray(value)) throw new Error("vtxos response is not an array");
+  return value.map((v, i) => {
+    if (
+      typeof v?.id !== "string" ||
+      typeof v?.amount_sat !== "number" ||
+      typeof v?.expiry_height !== "number" ||
+      typeof v?.state?.type !== "string"
+    ) {
+      throw new Error(`vtxo at index ${i} is missing expected fields`);
+    }
+    return v as Vtxo;
+  });
+}
+
+/**
  * VTXOs close enough to expiry that they should be refreshed now.
  * `bark`'s own default threshold on mainnet is 144 blocks (~24h).
  */
@@ -51,7 +72,9 @@ export async function runKeeperOnce(deps: KeeperDeps): Promise<void> {
     return;
   }
 
-  const tipRes = await fetch(`${esploraUrl}/blocks/tip/height`);
+  const tipRes = await fetch(`${esploraUrl}/blocks/tip/height`, {
+    signal: AbortSignal.timeout(30_000),
+  });
   if (!tipRes.ok) {
     log("keeper_tip_failed", { status: tipRes.status });
     return;
@@ -67,7 +90,13 @@ export async function runKeeperOnce(deps: KeeperDeps): Promise<void> {
     log("keeper_vtxos_failed", { status: vtxoRes.status });
     return;
   }
-  const vtxos = (await vtxoRes.json()) as Vtxo[];
+  let vtxos: Vtxo[];
+  try {
+    vtxos = parseVtxos(await vtxoRes.json());
+  } catch (e) {
+    log("keeper_vtxos_unparseable", { error: String(e) });
+    return;
+  }
   const due = vtxosNeedingRefresh(vtxos, tip, thresholdBlocks);
 
   if (due.length === 0) {

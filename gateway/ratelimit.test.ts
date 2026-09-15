@@ -26,3 +26,11 @@ test("keys are independent", () => {
   expect(rl.allow("b")).toBe(true);
   expect(rl.allow("a")).toBe(false);
 });
+
+test("the tracked-key map stays bounded under fabricated keys", () => {
+  let now = 0;
+  const rl = new RateLimiter(5, 60_000, () => now, 50);
+  for (let i = 0; i < 500; i++) rl.allow(`key-${i}`);
+  // @ts-expect-error reaching into private state is the point of the test
+  expect(rl.hits.size).toBeLessThanOrEqual(50);
+});

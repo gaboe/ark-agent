@@ -26,20 +26,40 @@ what the agent needs:
 | `POST /send` | spend | per-tx cap, daily cap, optional destination allowlist |
 | `POST /refresh` | spend | |
 
-Scopes are hierarchical: a spend key can read. Keys are compared in constant
-time, and every key is checked on each request rather than returning early, so
-the comparison work does not vary with which key was presented.
+Scopes are hierarchical: a spend key can read. Keys are compared by hashing both
+sides to 32 bytes first and then using `timingSafeEqual`, so neither the length
+nor the content of a guess changes the comparison time — comparing the raw
+strings would need a length check, and that check is itself an oracle.
+
+Keys must be at least 20 characters and must differ from each other; both are
+enforced at startup. Two equal values would silently promote the lower scope to
+the higher one.
 
 `/wallet/create`, `/offboard/all` and `/exit/start` are not proxied at all —
 they exist in `barkd` but not in anything reachable from outside.
 
-The daily tally lives in memory, so a restart resets it. That is a real gap: a
+Quota is **reserved before** the call to barkd and released if barkd refuses it.
+Checking first and recording after would look equivalent and is not: the `await`
+in between yields, so concurrent requests would all pass the check against a
+stale tally and all spend. At 10k per transaction and 60 requests a minute that
+is twelve times the daily cap in a minute, through the one control this whole
+layer exists to provide.
+
+A refused payment still gets its quota back, so invalid requests cannot burn the
+daily limit. A request that fails *indeterminately* — a timeout, where the sats
+may or may not have moved — keeps the reservation and returns 504: over-counting
+a day's spend is recoverable, under-counting is not.
+
+The tally lives in memory, so a restart resets it. That remains a real gap: a
 process that crash-loops could exceed the daily cap. For a wallet holding a few
 thousand sats a database is not worth it; if the balance grows, fix this first.
 
-A failed payment does not consume quota — the tally is only incremented after
-`barkd` confirms the send. There is a test for exactly that, because getting it
-backwards would let anyone burn the daily limit with invalid requests.
+Every limit is parsed with `Number.isInteger` validation that throws at startup.
+`Number(x) ?? default` guards only *unset*, never *malformed*: `SPEND_PER_TX_SAT=abc`
+becomes NaN, every comparison against NaN is false, and the cap silently
+disappears. The same typo in `MAINTAIN_INTERVAL` used to be worse — `setInterval`
+clamps NaN to 1ms, turning the keeper into a millisecond loop against barkd and
+Esplora.
 
 ### Rate limiting
 
@@ -246,16 +266,14 @@ next reload. Any custom label set has to restate the whole site block:
 caddy_0=https://pay.gaboe.xyz
 caddy_0.encode=zstd gzip
 caddy_0.header=-Server
-caddy_0.0_handle=/swagger-ui*
-caddy_0.0_handle.respond=403
-caddy_0.1_handle=/api-docs*
-caddy_0.1_handle.respond=403
-caddy_0.2_handle_path=/*
-caddy_0.2_handle_path.0_reverse_proxy={{upstreams 3000}}
+caddy_0.handle_path=/*
+caddy_0.handle_path.0_reverse_proxy={{upstreams 3001}}
 caddy_ingress_network=coolify
 ```
 
-The numeric prefixes are what order the handlers; the catch-all must come last.
+The port must match what the container actually exposes — the gateway on 3001,
+not barkd. When handlers are ordered, numeric prefixes do it and the catch-all
+comes last.
 
 **A failed deployment logs nothing useful through the API.** `status` is
 `failed`, `logs` is null, and `laravel.log` has no entry. The real error lives in

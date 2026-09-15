@@ -11,34 +11,62 @@ test("scopes are hierarchical", () => {
 
 test("per-transaction cap", () => {
   const t = new SpendTracker(limits);
-  expect(t.check(1000, "x")).toBeNull();
-  expect(t.check(1001, "x")).toContain("per-transaction limit");
+  expect(t.reserve(1000, "x")).toBeNull();
+  t.release(1000);
+  expect(t.reserve(1001, "x")).toContain("per-transaction limit");
 });
 
-test("daily cap counts only recorded spends", () => {
+test("reserving charges immediately, so concurrent sends cannot both pass", () => {
   const t = new SpendTracker(limits);
-  // Checking alone must not consume quota, or a failed payment would.
-  t.check(1000, "x");
-  t.check(1000, "x");
+  // Two in-flight payments that would together exceed the cap: the second must
+  // be refused even though the first has not settled yet.
+  expect(t.reserve(1000, "x")).toBeNull();
+  expect(t.reserve(1000, "x")).toBeNull();
+  expect(t.reserve(1000, "x")).toContain("daily limit");
+  expect(t.status().spent_today_sat).toBe(2000);
+});
+
+test("release gives quota back when a payment fails", () => {
+  const t = new SpendTracker(limits);
+  t.reserve(1000, "x");
+  expect(t.status().spent_today_sat).toBe(1000);
+  t.release(1000);
   expect(t.status().spent_today_sat).toBe(0);
-
-  t.record(1000); t.record(1000);
-  expect(t.check(1000, "x")).toContain("daily limit");
-  expect(t.check(500, "x")).toBeNull();
+  expect(t.reserve(1000, "x")).toBeNull();
 });
 
-test("rejects nonsense amounts", () => {
+test("commit keeps the reservation", () => {
   const t = new SpendTracker(limits);
-  expect(t.check(0, "x")).toContain("positive");
-  expect(t.check(-5, "x")).toContain("positive");
-  expect(t.check(1.5, "x")).toContain("positive");
+  t.reserve(1000, "x");
+  t.commit(1000);
+  expect(t.status().spent_today_sat).toBe(1000);
+});
+
+test("release never drives the tally negative", () => {
+  const t = new SpendTracker(limits);
+  t.release(500);
+  expect(t.status().spent_today_sat).toBe(0);
+});
+
+test("rejects nonsense amounts without charging", () => {
+  const t = new SpendTracker(limits);
+  expect(t.reserve(0, "x")).toContain("positive");
+  expect(t.reserve(-5, "x")).toContain("positive");
+  expect(t.reserve(1.5, "x")).toContain("positive");
+  expect(t.status().spent_today_sat).toBe(0);
+});
+
+test("a refused reservation does not consume quota", () => {
+  const t = new SpendTracker(limits);
+  expect(t.reserve(5000, "x")).toContain("per-transaction limit");
+  expect(t.status().spent_today_sat).toBe(0);
 });
 
 test("destination allowlist applies only when set", () => {
   const open = new SpendTracker(limits);
-  expect(open.check(10, "anywhere")).toBeNull();
+  expect(open.reserve(10, "anywhere")).toBeNull();
 
   const closed = new SpendTracker({ ...limits, allowedDestinations: ["ark1good"] });
-  expect(closed.check(10, "ark1good")).toBeNull();
-  expect(closed.check(10, "ark1bad")).toContain("allowlist");
+  expect(closed.reserve(10, "ark1good")).toBeNull();
+  expect(closed.reserve(10, "ark1bad")).toContain("allowlist");
 });

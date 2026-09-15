@@ -17,6 +17,12 @@ export class RateLimiter {
     private max: number,
     private windowMs: number,
     private now: () => number = Date.now,
+    /**
+     * Hard ceiling on tracked keys. Without it, a caller varying its key every
+     * request grows the map without bound and makes each sweep scan entries
+     * that have not expired yet — quadratic work on top of the memory.
+     */
+    private maxKeys = 10_000,
   ) {}
 
   /** True when the request is allowed. */
@@ -34,11 +40,20 @@ export class RateLimiter {
     return true;
   }
 
-  /** Drop windows that have expired, so one IP per request cannot grow forever. */
   private sweep(t: number): void {
-    if (this.hits.size < 1000) return;
+    if (this.hits.size < this.maxKeys) return;
+
     for (const [key, entry] of this.hits) {
       if (t - entry.windowStart >= this.windowMs) this.hits.delete(key);
+    }
+
+    // Still full: every entry is live, which means keys are being fabricated.
+    // Map iterates in insertion order, so dropping from the front evicts the
+    // oldest. Losing their counts is acceptable; unbounded growth is not.
+    while (this.hits.size >= this.maxKeys) {
+      const oldest = this.hits.keys().next();
+      if (oldest.done) break;
+      this.hits.delete(oldest.value);
     }
   }
 }

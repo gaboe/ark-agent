@@ -40,7 +40,9 @@ COPY --from=oven/bun:1.4-slim /usr/local/bin/bun /usr/local/bin/bun
 
 WORKDIR /gateway
 COPY gateway/package.json gateway/bun.lock* ./
-RUN bun install --frozen-lockfile --production 2>/dev/null || bun install --production
+# No `|| bun install` fallback: a lockfile that does not match package.json
+# should fail the build, not silently resolve something else.
+RUN bun install --frozen-lockfile --production
 COPY gateway/ ./
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh

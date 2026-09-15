@@ -30,8 +30,17 @@ export class SpendTracker {
 
   constructor(private limits: SpendLimits) {}
 
-  /** Returns null when allowed, or a human-readable reason when not. */
-  check(amountSat: number, destination: string): string | null {
+  /**
+   * Reserve quota for a payment about to be attempted.
+   *
+   * Reserving up front rather than recording afterwards is what makes the cap
+   * hold under concurrency: the check and the increment happen in one
+   * synchronous step, so two requests cannot both pass while the tally is
+   * stale. Every reservation must be settled with `commit` or `release`.
+   *
+   * Returns null when allowed, or a human-readable reason when not.
+   */
+  reserve(amountSat: number, destination: string): string | null {
     this.rollOver();
 
     if (!Number.isInteger(amountSat) || amountSat <= 0) {
@@ -47,13 +56,21 @@ export class SpendTracker {
     if (allowed.length > 0 && !allowed.includes(destination)) {
       return "destination is not on the allowlist";
     }
+
+    this.spentToday += amountSat;
     return null;
   }
 
-  /** Call only after the payment actually succeeded. */
-  record(amountSat: number): void {
+  /** The payment went through; the reservation stands. */
+  commit(_amountSat: number): void {
+    // Intentionally empty: `reserve` already charged the quota. Kept as an
+    // explicit call site so the settle-every-reservation rule is visible.
+  }
+
+  /** The payment did not go through; give the quota back. */
+  release(amountSat: number): void {
     this.rollOver();
-    this.spentToday += amountSat;
+    this.spentToday = Math.max(this.spentToday - amountSat, 0);
   }
 
   status() {

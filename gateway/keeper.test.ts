@@ -23,3 +23,16 @@ test("already expired VTXOs are still selected", () => {
 test("ignores VTXOs that are not spendable", () => {
   expect(vtxosNeedingRefresh([v("locked", 1100, "locked")], 1000, 144)).toHaveLength(0);
 });
+
+import { parseVtxos } from "./keeper";
+
+test("parseVtxos rejects shapes that would throw later", () => {
+  expect(() => parseVtxos({ message: "unauthorized" })).toThrow(/not an array/);
+  expect(() => parseVtxos([{ id: "a", amount_sat: 1, expiry_height: 2 }])).toThrow(/missing expected fields/);
+  expect(() => parseVtxos([{ id: 1, amount_sat: 1, expiry_height: 2, state: { type: "x" } }])).toThrow(/missing/);
+});
+
+test("parseVtxos accepts a well-formed list", () => {
+  const ok = parseVtxos([{ id: "a", amount_sat: 500, expiry_height: 100, state: { type: "spendable" } }]);
+  expect(ok).toHaveLength(1);
+});

@@ -8,28 +8,32 @@
  * spending behind a policy.
  */
 import { Elysia, t } from "elysia";
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 
 import { SpendTracker, scopeAllows, type Scope } from "./policy";
 import { RateLimiter } from "./ratelimit";
 import { runKeeperOnce } from "./keeper";
+import { intFromEnv, keysFromEnv } from "./config";
 
 const BARKD = process.env.BARKD_INTERNAL_URL ?? "http://127.0.0.1:3000";
 const BARKD_TOKEN = required("BARKD_AUTH_SECRET");
 const PORT = Number(process.env.GATEWAY_PORT ?? 3001);
 
-const KEYS: Record<Scope, string | null> = {
-  read: process.env.GATEWAY_READ_KEY || null,
-  invoice: process.env.GATEWAY_INVOICE_KEY || null,
-  spend: process.env.GATEWAY_SPEND_KEY || null,
-};
+const KEYS = keysFromEnv({
+  read: "GATEWAY_READ_KEY",
+  invoice: "GATEWAY_INVOICE_KEY",
+  spend: "GATEWAY_SPEND_KEY",
+}) as Record<Scope, string | null>;
 
 const tracker = new SpendTracker({
-  perTxSat: Number(process.env.SPEND_PER_TX_SAT ?? 10_000),
-  perDaySat: Number(process.env.SPEND_PER_DAY_SAT ?? 50_000),
+  perTxSat: intFromEnv("SPEND_PER_TX_SAT", 10_000, { min: 1 }),
+  perDaySat: intFromEnv("SPEND_PER_DAY_SAT", 50_000, { min: 1 }),
   allowedDestinations: (process.env.SPEND_ALLOWED_DESTINATIONS ?? "")
     .split(",").map((d) => d.trim()).filter(Boolean),
 });
+
+/** Nothing should hang a request or a keeper run forever. */
+const UPSTREAM_TIMEOUT_MS = intFromEnv("UPSTREAM_TIMEOUT_MS", 60_000, { min: 1000 });
 
 function required(name: string): string {
   const v = process.env[name];
@@ -44,15 +48,15 @@ function barkdBearer(hexSecret: string): string {
 }
 const BARKD_BEARER = barkdBearer(BARKD_TOKEN);
 
+/**
+ * Compare by hashing first, so both sides are always 32 bytes and the
+ * comparison cannot vary with the presented length. Comparing the raw strings
+ * would need a length check, and that check is itself a length oracle.
+ */
 function constantTimeEqual(a: string, b: string): boolean {
-  const ab = Buffer.from(a);
-  const bb = Buffer.from(b);
-  // timingSafeEqual throws on length mismatch, which would itself leak length.
-  if (ab.length !== bb.length) {
-    timingSafeEqual(ab, ab);
-    return false;
-  }
-  return timingSafeEqual(ab, bb);
+  const ah = createHash("sha256").update(a).digest();
+  const bh = createHash("sha256").update(b).digest();
+  return timingSafeEqual(ah, bh);
 }
 
 /** Returns the highest scope the presented key grants, or null. */
@@ -60,7 +64,7 @@ function scopeFor(authorization: string | undefined): Scope | null {
   if (!authorization?.startsWith("Bearer ")) return null;
   const presented = authorization.slice("Bearer ".length);
   let found: Scope | null = null;
-  // Check every key regardless of an early match so the work is uniform.
+  // Check every configured key rather than returning on the first match.
   for (const scope of ["read", "invoice", "spend"] as Scope[]) {
     const key = KEYS[scope];
     if (key && constantTimeEqual(presented, key)) found = scope;
@@ -75,6 +79,7 @@ function audit(event: string, fields: Record<string, unknown> = {}): void {
 async function bark(path: string, init?: RequestInit): Promise<Response> {
   return fetch(`${BARKD}${path}`, {
     ...init,
+    signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     headers: {
       ...(init?.headers ?? {}),
       authorization: `Bearer ${BARKD_BEARER}`,
@@ -109,10 +114,14 @@ const limiter = new RateLimiter(
 
 const app = new Elysia()
   .onBeforeHandle(({ request, server, set }) => {
-    // Behind Caddy, the socket address is the proxy, so prefer its header.
-    const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
-      ?? server?.requestIP(request)?.address
-      ?? "unknown";
+    // Caddy *appends* the peer to X-Forwarded-For, so the last element is the
+    // one it observed and the only one a client cannot forge. Taking the first
+    // would let a caller mint a new rate-limit bucket per request simply by
+    // sending its own header.
+    const forwarded = request.headers.get("x-forwarded-for");
+    const ip = forwarded?.split(",").pop()?.trim()
+      || server?.requestIP(request)?.address
+      || "unknown";
     if (!limiter.allow(ip)) {
       audit("rate_limited", { ip });
       set.status = 429;
@@ -163,23 +172,36 @@ const app = new Elysia()
   .post("/send", async ({ headers, set, body }) => {
     const denied = guard("spend")({ headers, set }); if (denied) return denied;
 
-    const reason = tracker.check(body.amount_sat, body.destination);
+    // Charge the quota before the await: two concurrent sends must not both
+    // see a stale tally and both pass.
+    const reason = tracker.reserve(body.amount_sat, body.destination);
     if (reason) {
       audit("send_refused", { reason, amount_sat: body.amount_sat });
       set.status = 403;
       return { message: reason };
     }
 
-    const res = await bark("/api/v1/wallet/send", {
-      method: "POST",
-      body: JSON.stringify(body),
-    });
+    let res: Response;
+    try {
+      res = await bark("/api/v1/wallet/send", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+    } catch (e) {
+      // The request may or may not have reached barkd, so the sats may or may
+      // not have moved. Keep the reservation: over-counting the day's spend is
+      // recoverable, under-counting is not.
+      audit("send_indeterminate", { amount_sat: body.amount_sat, error: String(e) });
+      set.status = 504;
+      return { message: "payment status unknown; quota was charged" };
+    }
 
-    // Only count sats that actually left; a rejected payment must not eat quota.
     if (res.ok) {
-      tracker.record(body.amount_sat);
+      tracker.commit(body.amount_sat);
       audit("sent", { amount_sat: body.amount_sat, destination: body.destination });
     } else {
+      // barkd refused it outright, so nothing left the wallet.
+      tracker.release(body.amount_sat);
       audit("send_failed", { status: res.status, amount_sat: body.amount_sat });
     }
     return passthrough(res);
@@ -201,15 +223,33 @@ const app = new Elysia()
 
 // The keeper lives in this process rather than a shell loop calling
 // `bark maintain`: the CLI cannot open the datadir while barkd holds it.
-const KEEPER_INTERVAL_MS = Number(process.env.MAINTAIN_INTERVAL ?? 21_600) * 1000;
+// setInterval clamps anything outside [1, 2^31-1] to 1ms, so an unparseable
+// value here would turn the keeper into a millisecond loop against barkd and
+// Esplora. intFromEnv refuses it at startup instead.
+const KEEPER_INTERVAL_MS = intFromEnv("MAINTAIN_INTERVAL", 21_600, { min: 60 }) * 1000;
 const keeperDeps = {
   bark,
   esploraUrl: process.env.ESPLORA ?? "https://mempool.second.tech/api",
-  thresholdBlocks: Number(process.env.REFRESH_THRESHOLD_BLOCKS ?? 144),
+  thresholdBlocks: intFromEnv("REFRESH_THRESHOLD_BLOCKS", 144, { min: 1 }),
   log: audit,
 };
 
-const keep = () => runKeeperOnce(keeperDeps).catch((e) => audit("keeper_error", { error: String(e) }));
+let keeperRunning = false;
+const keep = async () => {
+  // A slow upstream must not let runs pile up on top of each other.
+  if (keeperRunning) {
+    audit("keeper_skipped_still_running");
+    return;
+  }
+  keeperRunning = true;
+  try {
+    await runKeeperOnce(keeperDeps);
+  } catch (e) {
+    audit("keeper_error", { error: String(e) });
+  } finally {
+    keeperRunning = false;
+  }
+};
 setTimeout(keep, 30_000);           // once shortly after boot
 setInterval(keep, KEEPER_INTERVAL_MS);
 
