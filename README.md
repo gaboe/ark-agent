@@ -137,6 +137,48 @@ Using the release binaries also removes the `You're running a custom build of
 bark, which might cause unexpected issues` warning that a cargo build carries,
 and shortens the trust chain to upstream's own checksums.
 
+## Coolify deployment notes
+
+Things that cost time here and are not obvious from the panel:
+
+**The proxy is Caddy, not Traefik.** Coolify 4.3 on this host runs
+`lucaslorentz/caddy-docker-proxy`. Traefik labels attach to the container
+happily and are then read by nobody, so a rule appears to be ignored rather than
+rejected.
+
+**`custom_labels` replaces Coolify's generated labels, it does not extend
+them.** Setting only a new rule leaves the container with no `caddy_*` labels at
+all; the site keeps working from the proxy's current config and breaks at the
+next reload. Any custom label set has to restate the whole site block:
+
+```
+caddy_0=https://pay.gaboe.xyz
+caddy_0.encode=zstd gzip
+caddy_0.header=-Server
+caddy_0.0_handle=/swagger-ui*
+caddy_0.0_handle.respond=403
+caddy_0.1_handle=/api-docs*
+caddy_0.1_handle.respond=403
+caddy_0.2_handle_path=/*
+caddy_0.2_handle_path.0_reverse_proxy={{upstreams 3000}}
+caddy_ingress_network=coolify
+```
+
+The numeric prefixes are what order the handlers; the catch-all must come last.
+
+**A failed deployment logs nothing useful through the API.** `status` is
+`failed`, `logs` is null, and `laravel.log` has no entry. The real error lives in
+Coolify's own database:
+
+```sql
+SELECT exception FROM failed_jobs ORDER BY failed_at DESC LIMIT 1;
+```
+
+That is where `no match for platform in manifest` was hiding.
+
+**Round participation survives a container restart.** It is persisted in the
+wallet's sqlite, so redeploying while a refresh is mid-round does not lose it.
+
 ## Limits
 
 The seed lives on the VPS. A host compromise is a wallet compromise, and there is
