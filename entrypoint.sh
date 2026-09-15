@@ -30,22 +30,11 @@ if [ -n "$BARKD_AUTH_SECRET" ]; then
         || { echo "[init] FAILED to set auth secret"; exit 1; }
 fi
 
-# Keeper loop. `maintain` syncs and refreshes VTXOs that are close to expiry;
-# the server charges 0 ppm for those, so running it often costs nothing.
-(
-    while true; do
-        sleep "$MAINTAIN_INTERVAL"
-        echo "[maintain] $(date -u +%FT%TZ) starting"
-        bark --datadir "$BARKD_DATADIR" maintain -q \
-            && echo "[maintain] ok" \
-            || echo "[maintain] FAILED (will retry next cycle)"
-    done
-) &
-KEEPER=$!
-
-# If the keeper exits, take the daemon down too rather than silently
-# running a wallet nobody is refreshing.
-trap 'kill $KEEPER $DAEMON $GATEWAY 2>/dev/null; exit 0' TERM INT
+# The gateway runs the keeper in-process: `bark maintain` cannot open the
+# datadir while barkd holds it, so maintenance goes through barkd's HTTP API.
+# If the gateway dies, the wallet stops being refreshed, so the container goes
+# down with it rather than quietly holding funds that will expire.
+trap 'kill $DAEMON $GATEWAY 2>/dev/null; exit 0' TERM INT
 
 echo "[barkd] starting on $BARKD_BIND_HOST:$BARKD_BIND_PORT (loopback only)"
 barkd &
@@ -63,7 +52,7 @@ while [ $i -lt 60 ]; do
 done
 if [ $i -ge 60 ]; then
     echo "[fatal] barkd did not answer on loopback within 60s"
-    kill "$KEEPER" "$DAEMON" 2>/dev/null || true
+    kill "$DAEMON" 2>/dev/null || true
     exit 1
 fi
 echo "[barkd] ready"
@@ -73,12 +62,10 @@ echo "[gateway] starting on 0.0.0.0:${GATEWAY_PORT}"
 GATEWAY=$!
 
 # `wait -n` is a bashism and /bin/sh here is dash, so poll the children.
-while kill -0 "$KEEPER" 2>/dev/null \
-   && kill -0 "$DAEMON" 2>/dev/null \
-   && kill -0 "$GATEWAY" 2>/dev/null; do
+while kill -0 "$DAEMON" 2>/dev/null && kill -0 "$GATEWAY" 2>/dev/null; do
     sleep 5
 done
 
 echo "[fatal] a child exited, shutting down"
-kill "$KEEPER" "$DAEMON" "$GATEWAY" 2>/dev/null || true
+kill "$DAEMON" "$GATEWAY" 2>/dev/null || true
 exit 1

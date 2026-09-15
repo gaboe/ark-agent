@@ -12,6 +12,7 @@ import { timingSafeEqual } from "node:crypto";
 
 import { SpendTracker, scopeAllows, type Scope } from "./policy";
 import { RateLimiter } from "./ratelimit";
+import { runKeeperOnce } from "./keeper";
 
 const BARKD = process.env.BARKD_INTERNAL_URL ?? "http://127.0.0.1:3000";
 const BARKD_TOKEN = required("BARKD_AUTH_SECRET");
@@ -198,9 +199,25 @@ const app = new Elysia()
 
   .listen({ hostname: "0.0.0.0", port: PORT });
 
+// The keeper lives in this process rather than a shell loop calling
+// `bark maintain`: the CLI cannot open the datadir while barkd holds it.
+const KEEPER_INTERVAL_MS = Number(process.env.MAINTAIN_INTERVAL ?? 21_600) * 1000;
+const keeperDeps = {
+  bark,
+  esploraUrl: process.env.ESPLORA ?? "https://mempool.second.tech/api",
+  thresholdBlocks: Number(process.env.REFRESH_THRESHOLD_BLOCKS ?? 144),
+  log: audit,
+};
+
+const keep = () => runKeeperOnce(keeperDeps).catch((e) => audit("keeper_error", { error: String(e) }));
+setTimeout(keep, 30_000);           // once shortly after boot
+setInterval(keep, KEEPER_INTERVAL_MS);
+
 audit("gateway_started", {
   port: PORT,
   barkd: BARKD,
   scopes_configured: (Object.keys(KEYS) as Scope[]).filter((s) => KEYS[s]),
   limits: tracker.status(),
+  keeper_interval_s: KEEPER_INTERVAL_MS / 1000,
+  refresh_threshold_blocks: keeperDeps.thresholdBlocks,
 });
