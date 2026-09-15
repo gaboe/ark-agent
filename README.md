@@ -45,7 +45,9 @@ So a payment can arrive with hours left on it. `./wallet.sh vtxos` shows
 
 | file | what |
 |---|---|
-| `Dockerfile` | builds `bark` + `barkd` 0.7.1 from crates.io |
+| `Dockerfile.build` | builds `bark` + `barkd` 0.7.1 from crates.io — runs in CI only |
+| `Dockerfile` | what Coolify deploys: a one-line pull of the CI-built image |
+| `.github/workflows/build.yml` | builds and pushes `ghcr.io/gaboe/ark-agent` |
 | `entrypoint.sh` | creates the wallet if absent, starts the keeper, runs `barkd` |
 | `wallet.sh` | client for the API; token from the macOS Keychain |
 
@@ -57,6 +59,18 @@ security add-generic-password -a "$USER" -s barkd-token -w
 
 `barkd secret show` prints it, `barkd secret refresh` rotates it. Rotating it
 locks out anything holding the old one, which is the only revocation available.
+
+## Do not build this on the VPS
+
+The first deployment compiled bark on the server. A Rust build of this size
+wants several GB of RAM, the host did not have it to spare, and Coolify's own
+containers were starved until the whole panel went unreachable — while the
+already-running sites kept serving, which made it look like a Coolify fault
+rather than a memory one.
+
+The image is now built by GitHub Actions and pushed to GHCR; the server only
+pulls it. If you ever edit `Dockerfile.build`, let CI rebuild rather than
+pointing Coolify back at it.
 
 ## Limits
 
